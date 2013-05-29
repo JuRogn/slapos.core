@@ -340,6 +340,10 @@ class Computer(SlapDocument):
     xml = self._connection_helper.response.read()
     return xml_marshaller.loads(xml)
 
+  def reportNetDriveUsage(self, xml):
+    self._connection_helper.POST(
+        '/reportNetDriveUsageFromXML', { 'xml' : xml })
+    return self._connection_helper.response.read()
 
 def parsed_error_message(status, body, path):
   m = re.search('(Error Value:\n.*)', body, re.MULTILINE)
