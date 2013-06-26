@@ -124,13 +124,13 @@ def getCleanEnvironment(logger, home_path='/tmp'):
   env = os.environ.copy()
   # Clean python related environment variables
   for k in PYTHON_ENVIRONMENT_REMOVE_LIST + SYSTEM_ENVIRONMENT_REMOVE_LIST \
-      + LOCALE_ENVIRONMENT_REMOVE_LIST:
+        + LOCALE_ENVIRONMENT_REMOVE_LIST:
     old = env.pop(k, None)
     if old is not None:
       removed_env.append(k)
   changed_env['HOME'] = env['HOME'] = home_path
   for k in sorted(changed_env.iterkeys()):
-    logger.debug('Overriden %s = %r' % (k, changed_env[k]))
+    logger.debug('Overridden %s = %r' % (k, changed_env[k]))
   logger.debug('Removed from environment: %s' % ', '.join(sorted(removed_env)))
   return env
 
@@ -175,21 +175,21 @@ def dropPrivileges(uid, gid, logger):
   Do tests to check if dropping was successful and that no system call is able
   to re-raise dropped privileges
 
-  Does nothing in case if uid and gid are not 0
+  Does nothing if uid and gid are not 0
   """
   # XXX-Cedric: remove format / just do a print, otherwise formatting is done
   # twice
   current_uid, current_gid = os.getuid(), os.getgid()
   if uid == 0 or gid == 0:
-    raise OSError('Dropping privileges to uid = %r or ' \
-                                      'gid = %r is too dangerous' % (uid, gid))
+    raise OSError('Dropping privileges to uid = %r or '
+                  'gid = %r is too dangerous' % (uid, gid))
   if current_uid or current_gid:
-    logger.debug('Running as uid = %r, gid = %r, dropping not needed and not '
-        'possible' % (current_uid, current_gid))
+    logger.debug('Running as uid = %r, gid = %r, dropping '
+                 'not needed and not possible' % (current_uid, current_gid))
     return
   # drop privileges
   user_name = pwd.getpwuid(uid)[0]
-  group_list = set([x.gr_gid for x in grp.getgrall() if user_name in x.gr_mem])
+  group_list = set(x.gr_gid for x in grp.getgrall() if user_name in x.gr_mem)
   group_list.add(gid)
   os.initgroups(pwd.getpwuid(uid)[0], gid)
   os.setgid(gid)
@@ -197,8 +197,7 @@ def dropPrivileges(uid, gid, logger):
 
   # assert that privileges are dropped
   message_pre = 'After dropping to uid = %r and gid = %r ' \
-                'and group_list = %s' % (
-                            uid, gid, group_list)
+                'and group_list = %s' % (uid, gid, group_list)
   new_uid, new_gid, new_group_list = os.getuid(), os.getgid(), os.getgroups()
   if not (new_uid == uid and new_gid == gid and set(new_group_list) == group_list):
     raise OSError('%s new_uid = %r and new_gid = %r and '
@@ -224,14 +223,14 @@ def dropPrivileges(uid, gid, logger):
     pass
   else:
     raise ValueError('%s it was possible to go back to uid = %r and gid = '
-        '%r which is fatal.' % (message_pre, current_uid, current_gid))
+                     '%r which is fatal.' % (message_pre, current_uid, current_gid))
   logger.debug('Succesfully dropped privileges to uid=%r gid=%r' % (uid, gid))
 
 
 def bootstrapBuildout(path, logger, buildout=None,
-                      additional_buildout_parametr_list=None):
-  if additional_buildout_parametr_list is None:
-    additional_buildout_parametr_list = []
+                      additional_buildout_parameter_list=None):
+  if additional_buildout_parameter_list is None:
+    additional_buildout_parameter_list = []
   # Reads uid/gid of path, launches buildout with thoses privileges
   stat_info = os.stat(path)
   uid = stat_info.st_uid
@@ -240,7 +239,7 @@ def bootstrapBuildout(path, logger, buildout=None,
   invocation_list = [sys.executable, '-S']
   if buildout is not None:
     invocation_list.append(buildout)
-    invocation_list.extend(additional_buildout_parametr_list)
+    invocation_list.extend(additional_buildout_parameter_list)
   else:
     try:
       __import__('zc.buildout')
@@ -249,12 +248,12 @@ def bootstrapBuildout(path, logger, buildout=None,
         'Consider having zc.buildout available in search path.')
       invocation_list.append(pkg_resources.resource_filename(__name__,
         'zc.buildout-bootstap.py'))
-      invocation_list.extend(additional_buildout_parametr_list)
+      invocation_list.extend(additional_buildout_parameter_list)
     else:
       # buildout is importable, so use this one
       invocation_list.extend(["-c", "import sys ; sys.path=" + str(sys.path) +
-        " ; import zc.buildout.buildout ; sys.argv[1:1]=" + \
-        repr(additional_buildout_parametr_list + ['bootstrap']) + " ; "
+        " ; import zc.buildout.buildout ; sys.argv[1:1]=" +
+        repr(additional_buildout_parameter_list + ['bootstrap']) + " ; "
         "zc.buildout.buildout.main()"])
 
   if buildout is not None:
@@ -271,10 +270,11 @@ def bootstrapBuildout(path, logger, buildout=None,
                                 stderr=subprocess.STDOUT,
                                 logger=logger)
     if process_handler.returncode is None or process_handler.returncode != 0:
-      message = 'Failed to run buildout profile in directory %r' % (path)
+      message = 'Failed to run buildout profile in directory %r' % path
       logger.error(message)
       raise BuildoutFailedError('%s:\n%s\n' % (message, process_handler.output))
   except OSError as exc:
+    logger.exception(exc)
     raise BuildoutFailedError(exc)
   finally:
     old_umask = os.umask(umask)
@@ -282,10 +282,10 @@ def bootstrapBuildout(path, logger, buildout=None,
 
 
 def launchBuildout(path, buildout_binary, logger,
-                   additional_buildout_parametr_list=None):
+                   additional_buildout_parameter_list=None):
   """ Launches buildout."""
-  if additional_buildout_parametr_list is None:
-    additional_buildout_parametr_list = []
+  if additional_buildout_parameter_list is None:
+    additional_buildout_parameter_list = []
   # Reads uid/gid of path, launches buildout with thoses privileges
   stat_info = os.stat(path)
   uid = stat_info.st_uid
@@ -299,7 +299,7 @@ def launchBuildout(path, buildout_binary, logger,
     invocation_list = line.split() + [buildout_binary]
   # Run buildout without reading user defaults
   invocation_list.append('-U')
-  invocation_list.extend(additional_buildout_parametr_list)
+  invocation_list.extend(additional_buildout_parameter_list)
   try:
     umask = os.umask(SAFE_UMASK)
     logger.debug('Set umask from %03o to %03o' % (umask, SAFE_UMASK))
@@ -314,10 +314,11 @@ def launchBuildout(path, buildout_binary, logger,
                                 stderr=subprocess.STDOUT,
                                 logger=logger)
     if process_handler.returncode is None or process_handler.returncode != 0:
-      message = 'Failed to run buildout profile in directory %r' % (path)
+      message = 'Failed to run buildout profile in directory %r' % path
       logger.error(message)
       raise BuildoutFailedError('%s:\n%s\n' % (message, process_handler.output))
   except OSError as exc:
+    logger.exception(exc)
     raise BuildoutFailedError(exc)
   finally:
     old_umask = os.umask(umask)
@@ -325,11 +326,11 @@ def launchBuildout(path, buildout_binary, logger,
 
 
 def updateFile(file_path, content, mode=0o600):
-  """Creates an executable with "content" as content."""
+  """Creates or updates a file with "content" as content."""
   altered = False
   if not (os.path.isfile(file_path)) or \
-     not(hashlib.md5(open(file_path).read()).digest() ==\
-         hashlib.md5(content).digest()):
+     not (hashlib.md5(open(file_path).read()).digest() ==
+          hashlib.md5(content).digest()):
     with open(file_path, 'w') as fout:
       fout.write(content)
     altered = True
@@ -341,17 +342,17 @@ def updateFile(file_path, content, mode=0o600):
 
 
 def updateExecutable(executable_path, content):
-  """Creates an executable with "content" as content."""
+  """Creates or updates an executable file with "content" as content."""
   return updateFile(executable_path, content, 0o700)
 
 
 def createPrivateDirectory(path):
-  """Creates directory belonging to root with umask 077"""
+  """Creates a directory belonging to root with umask 077"""
   if not os.path.isdir(path):
     os.mkdir(path)
   os.chmod(path, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
   permission = stat.S_IMODE(os.stat(path).st_mode)
   if permission != 0o700:
-    raise WrongPermissionError('Wrong permissions in %s: ' \
+    raise WrongPermissionError('Wrong permissions in %s: '
                                'is 0%o, should be 0700'
                                % (path, permission))

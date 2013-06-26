@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-import logging
 import os
 
 from slapos.cli.command import must_be_root
@@ -12,9 +11,7 @@ import supervisor.supervisorctl
 
 
 class SupervisorctlCommand(ConfigCommand):
-    """enter into supervisor console, for process management"""
-
-    log = logging.getLogger('supervisorctl')
+    """open supervisor console, for process management"""
 
     def get_parser(self, prog_name):
         ap = super(SupervisorctlCommand, self).get_parser(prog_name)
@@ -30,7 +27,7 @@ class SupervisorctlCommand(ConfigCommand):
         configuration_file = os.path.join(instance_root, 'etc', 'supervisord.conf')
         launchSupervisord(socket=os.path.join(instance_root, 'supervisord.socket'),
                           configuration_file=configuration_file,
-                          logger=self.log)
+                          logger=self.app.log)
         supervisor.supervisorctl.main(args=['-c', configuration_file] + args.supervisor_args)
 
 

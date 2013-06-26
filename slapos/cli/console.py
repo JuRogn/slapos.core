@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 
-import logging
-
 from slapos.cli.config import ClientConfigCommand
 from slapos.client import init, do_console, ClientConfig
 
 
 class ConsoleCommand(ClientConfigCommand):
     """
-    python console with slap library imported
+    open python console with slap library imported
 
     You can play with the global "slap" object and
     with the global "request" method.
@@ -21,8 +19,6 @@ class ConsoleCommand(ClientConfigCommand):
     >>> # Fetch instance informations on already launched instance
     >>> request(kvm, "myuniquekvm").getConnectionParameter("url")
     """
-
-    log = logging.getLogger('console')
 
     def get_parser(self, prog_name):
         ap = super(ConsoleCommand, self).get_parser(prog_name)

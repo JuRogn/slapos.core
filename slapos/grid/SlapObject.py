@@ -43,7 +43,7 @@ from supervisor import xmlrpc
 
 from slapos.grid.utils import (md5digest, getCleanEnvironment,
                                SlapPopen, dropPrivileges, updateFile)
-from slapos.grid import utils # for mocked methods
+from slapos.grid import utils  # for methods that could be mocked, access them through the module
 from slapos.slap.slap import NotFoundError
 from slapos.grid.svcbackend import getSupervisorRPC
 from slapos.grid.exception import (BuildoutFailedError, WrongPermissionError,
@@ -53,10 +53,16 @@ from slapos.grid.watchdog import getWatchdogID
 
 REQUIRED_COMPUTER_PARTITION_PERMISSION = 0o750
 
+# XXX not very clean. this is changed when testing
+PROGRAM_PARTITION_TEMPLATE = pkg_resources.resource_stream(__name__,
+            'templates/program_partition_supervisord.conf.in').read()
+
 
 class Software(object):
   """This class is responsible for installing a software release"""
 
+  # XXX: "url" parameter should be named "key", "target" or alike to be more generic.
+  #      The key is an url in the case of Buildout.
   def __init__(self, url, software_root, buildout, logger,
                signature_private_key_file=None, signature_certificate_list=None,
                upload_cache_url=None, upload_dir_url=None, shacache_cert_file=None,
@@ -139,73 +145,84 @@ class Software(object):
     finally:
       shutil.rmtree(cache_dir)
 
+  def _set_ownership(self, path):
+    """
+    If running as root: copy ownership of software_root to path
+    If not running as root: do nothing
+    """
+    if os.getuid():
+      return
+    root_stat = os.stat(self.software_root)
+    path_stat = os.stat(path)
+    if (root_stat.st_uid != path_stat.st_uid or
+          root_stat.st_gid != path_stat.st_gid):
+      os.chown(path, root_stat.st_uid, root_stat.st_gid)
+
+  def _additional_buildout_parameters(self, extends_cache):
+    yield 'buildout:extends-cache=%s' % extends_cache
+    yield 'buildout:directory=%s' % self.software_path
+
+    if (self.signature_private_key_file or
+          self.upload_cache_url or
+          self.upload_dir_url):
+      yield 'buildout:networkcache-section=networkcache'
+
+    for networkcache_option, value in [
+        ('signature-private-key-file', self.signature_private_key_file),
+        ('upload-cache-url', self.upload_cache_url),
+        ('upload-dir-url', self.upload_dir_url),
+        ('shacache-cert-file', self.shacache_cert_file),
+        ('shacache-key-file', self.shacache_key_file),
+        ('shadir-cert-file', self.shadir_cert_file),
+        ('shadir-key-file', self.shadir_key_file)
+    ]:
+      if value:
+        yield 'networkcache:%s=%s' % (networkcache_option, value)
+
   def _install_from_buildout(self):
     """ Fetches buildout configuration from the server, run buildout with
     it. If it fails, we notify the server.
     """
-    root_stat_info = os.stat(self.software_root)
+    root_stat = os.stat(self.software_root)
     os.environ = getCleanEnvironment(logger=self.logger,
-                                     home_path=pwd.getpwuid(root_stat_info.st_uid).pw_dir)
+                                     home_path=pwd.getpwuid(root_stat.st_uid).pw_dir)
     if not os.path.isdir(self.software_path):
       os.mkdir(self.software_path)
+      self._set_ownership(self.software_path)
+
     extends_cache = tempfile.mkdtemp()
-    if os.getuid() == 0:
-      # In case when running as root copy ownership, to simplify logic
-      for path in [self.software_path, extends_cache]:
-        path_stat_info = os.stat(path)
-        if (root_stat_info.st_uid != path_stat_info.st_uid or
-              root_stat_info.st_gid != path_stat_info.st_gid):
-          os.chown(path, root_stat_info.st_uid,
-                   root_stat_info.st_gid)
+    self._set_ownership(extends_cache)
+
     try:
-      buildout_parameter_list = [
-          'buildout:extends-cache=%s' % extends_cache,
-          'buildout:directory=%s' % self.software_path
-      ]
-
-      if (self.signature_private_key_file or
-          self.upload_cache_url or
-          self.upload_dir_url):
-        buildout_parameter_list.append('buildout:networkcache-section=networkcache')
-      for buildout_option, value in [
-          ('%ssignature-private-key-file=%s', self.signature_private_key_file),
-          ('%supload-cache-url=%s', self.upload_cache_url),
-          ('%supload-dir-url=%s', self.upload_dir_url),
-          ('%sshacache-cert-file=%s', self.shacache_cert_file),
-          ('%sshacache-key-file=%s', self.shacache_key_file),
-          ('%sshadir-cert-file=%s', self.shadir_cert_file),
-          ('%sshadir-key-file=%s', self.shadir_key_file)
-      ]:
-        if value:
-          buildout_parameter_list.append(buildout_option % ('networkcache:', value))
-
       buildout_cfg = os.path.join(self.software_path, 'buildout.cfg')
-      self.createProfileIfMissing(buildout_cfg, self.url)
+      if not os.path.exists(buildout_cfg):
+        self._create_buildout_profile(buildout_cfg, self.url)
 
-      buildout_parameter_list.extend(['-c', buildout_cfg])
+      additional_parameters = list(self._additional_buildout_parameters(extends_cache))
+      additional_parameters.extend(['-c', buildout_cfg])
+
       utils.bootstrapBuildout(path=self.software_path,
                               buildout=self.buildout,
                               logger=self.logger,
-                              additional_buildout_parametr_list=buildout_parameter_list)
+                              additional_buildout_parameter_list=additional_parameters)
+
       utils.launchBuildout(path=self.software_path,
                            buildout_binary=os.path.join(self.software_path, 'bin', 'buildout'),
                            logger=self.logger,
-                           additional_buildout_parametr_list=buildout_parameter_list)
+                           additional_buildout_parameter_list=additional_parameters)
     finally:
       shutil.rmtree(extends_cache)
 
-  def createProfileIfMissing(self, buildout_cfg, url):
-    root_stat_info = os.stat(self.software_root)
-    if not os.path.exists(buildout_cfg):
-      with open(buildout_cfg, 'wb') as fout:
-        fout.write(textwrap.dedent("""\
-            # Created by slapgrid. extends {url}
-            # but you can change it for development purposes.
+  def _create_buildout_profile(self, buildout_cfg, url):
+    with open(buildout_cfg, 'wb') as fout:
+      fout.write(textwrap.dedent("""\
+          # Created by slapgrid. extends {url}
+          # but you can change it for development purposes.
 
-            [buildout]
-            extends = {url}
-            """.format(url=url)))
-        os.chown(buildout_cfg, root_stat_info.st_uid, root_stat_info.st_gid)
+          [buildout]
+          extends = {url}
+          """.format(url=url)))
+    self._set_ownership(buildout_cfg)
 
   def uploadSoftwareRelease(self, tarpath):
     """
@@ -254,6 +271,8 @@ class Partition(object):
   """This class is responsible of the installation of an instance
   """
 
+  # XXX: we should give the url (or the "key") instead of the software_path
+  #      then compute the path from it, like in Software.
   def __init__(self,
                software_path,
                instance_path,
@@ -302,10 +321,7 @@ class Partition(object):
 
     uid, gid = self.getUserGroupId()
 
-    for name, path in [
-            ('certificate', self.cert_file),
-            ('key', self.key_file),
-            ]:
+    for name, path in [('certificate', self.cert_file), ('key', self.key_file)]:
       new_content = partition_certificate[name]
       old_content = None
       if os.path.exists(path):
@@ -321,7 +337,6 @@ class Partition(object):
           fout.write(new_content)
         os.chown(path, uid, gid)
 
-
   def getUserGroupId(self):
     """Returns tuple of (uid, gid) of partition"""
     stat_info = os.stat(self.instance_path)
@@ -332,22 +347,20 @@ class Partition(object):
   def addServiceToGroup(self, partition_id,
                         runner_list, path, extension=''):
     uid, gid = self.getUserGroupId()
-    program_partition_template = pkg_resources.resource_stream(__name__,
-            'templates/program_partition_supervisord.conf.in').read()
     for runner in runner_list:
       self.partition_supervisor_configuration += '\n' + \
-          program_partition_template % {
-                  'program_id': '_'.join([partition_id, runner]),
-                  'program_directory': self.instance_path,
-                  'program_command': os.path.join(path, runner),
-                  'program_name': runner + extension,
-                  'instance_path': self.instance_path,
-                  'user_id': uid,
-                  'group_id': gid,
-                  # As supervisord has no environment to inherit, setup a minimalistic one
-                  'HOME': pwd.getpwuid(uid).pw_dir,
-                  'USER': pwd.getpwuid(uid).pw_name,
-                  }
+          PROGRAM_PARTITION_TEMPLATE % {
+              'program_id': '_'.join([partition_id, runner]),
+              'program_directory': self.instance_path,
+              'program_command': os.path.join(path, runner),
+              'program_name': runner + extension,
+              'instance_path': self.instance_path,
+              'user_id': uid,
+              'group_id': gid,
+              # As supervisord has no environment to inherit, setup a minimalistic one
+              'HOME': pwd.getpwuid(uid).pw_dir,
+              'USER': pwd.getpwuid(uid).pw_name,
+          }
 
   def updateSymlink(self, sr_symlink, software_path):
     if os.path.lexists(sr_symlink):
@@ -382,30 +395,39 @@ class Partition(object):
                                   REQUIRED_COMPUTER_PARTITION_PERMISSION))
     os.environ = getCleanEnvironment(logger=self.logger,
                                      home_path=pwd.getpwuid(instance_stat_info.st_uid).pw_dir)
-    # Generates buildout part from template
+
+    # Check that Software Release directory is present
+    if not os.path.exists(self.software_path):
+      # XXX What should it raise?
+      raise IOError('Software Release %s is not present on system.\n'
+                    'Cannot deploy instance.' % self.software_release_url)
+
+    # Generate buildout instance profile from template in Software Release
     template_location = os.path.join(self.software_path, 'instance.cfg')
-    # Backward compatibility: "instance.cfg" file was named "template.cfg".
     if not os.path.exists(template_location):
-      template_location = os.path.join(self.software_path, 'template.cfg')
+      # Backward compatibility: "instance.cfg" file was named "template.cfg".
+      if os.path.exists(os.path.join(self.software_path, 'template.cfg')):
+        template_location = os.path.join(self.software_path, 'template.cfg')
+      else:
+        # No template: Software Release is either inconsistent or not correctly installed.
+        # XXX What should it raise?
+        raise IOError('Software Release %s is not correctly installed.\nMissing file: %s' % (
+            self.software_release_url, template_location))
     config_location = os.path.join(self.instance_path, 'buildout.cfg')
     self.logger.debug("Copying %r to %r" % (template_location, config_location))
-    try:
-      shutil.copy(template_location, config_location)
-    except IOError as exc:
-      # Template not found on SR, we notify user.
-      raise IOError('Software Release %s is not correctly installed.\n%s' % (
-                      self.software_release_url, exc))
+    shutil.copy(template_location, config_location)
+
     # fill generated buildout with additional information
     buildout_text = open(config_location).read()
     buildout_text += '\n\n' + pkg_resources.resource_string(__name__,
         'templates/buildout-tail.cfg.in') % {
-                'computer_id': self.computer_id,
-                'partition_id': self.partition_id,
-                'server_url': self.server_url,
-                'software_release_url': self.software_release_url,
-                'key_file': self.key_file,
-                'cert_file': self.cert_file,
-                }
+            'computer_id': self.computer_id,
+            'partition_id': self.partition_id,
+            'server_url': self.server_url,
+            'software_release_url': self.software_release_url,
+            'key_file': self.key_file,
+            'cert_file': self.cert_file,
+        }
     open(config_location, 'w').write(buildout_text)
     os.chmod(config_location, 0o640)
     # Try to find the best possible buildout:
@@ -467,12 +489,17 @@ class Partition(object):
     utils.launchBuildout(path=self.instance_path,
                          buildout_binary=buildout_binary,
                          logger=self.logger)
-    # Generates supervisord configuration file from template
-    self.logger.info("Generating supervisord config file from template...")
-    # check if CP/etc/run exists and it is a directory
-    # iterate over each file in CP/etc/run
-    # iterate over each file in CP/etc/service adding WatchdogID to their name
-    # if at least one is not 0o750 raise -- partition has something funny
+    self.generateSupervisorConfigurationFile()
+
+  def generateSupervisorConfigurationFile(self):
+    """
+    Generates supervisord configuration file from template.
+
+    check if CP/etc/run exists and it is a directory
+    iterate over each file in CP/etc/run
+    iterate over each file in CP/etc/service adding WatchdogID to their name
+    if at least one is not 0o750 raise -- partition has something funny
+    """
     runner_list = []
     service_list = []
     if os.path.exists(self.run_path):
@@ -491,10 +518,10 @@ class Partition(object):
       group_partition_template = pkg_resources.resource_stream(__name__,
           'templates/group_partition_supervisord.conf.in').read()
       self.partition_supervisor_configuration = group_partition_template % {
-              'instance_id': partition_id,
-              'program_list': ','.join(['_'.join([partition_id, runner])
-                                        for runner in runner_list + service_list])
-              }
+          'instance_id': partition_id,
+          'program_list': ','.join(['_'.join([partition_id, runner])
+                                    for runner in runner_list + service_list])
+      }
       # Same method to add to service and run
       self.addServiceToGroup(partition_id, runner_list, self.run_path)
       self.addServiceToGroup(partition_id, service_list, self.service_path,
@@ -571,9 +598,10 @@ class Partition(object):
           shutil.rmtree(os.path.join(self.instance_path, directory))
         for file in file_list:
           os.remove(os.path.join(self.instance_path, file))
-        if os.path.exists(self.supervisord_partition_configuration_path):
-          os.remove(self.supervisord_partition_configuration_path)
-        self.updateSupervisor()
+
+      if os.path.exists(self.supervisord_partition_configuration_path):
+        os.remove(self.supervisord_partition_configuration_path)
+      self.updateSupervisor()
     except IOError as exc:
       raise IOError("I/O error while freeing partition (%s): %s" % (self.instance_path, exc))
 
@@ -588,7 +616,7 @@ class Partition(object):
   def updateSupervisor(self):
     """Forces supervisord to reload its configuration"""
     # Note: This method shall wait for results from supervisord
-    #       In future it will be not needed, as update command
+    #       In future it will not be needed, as update command
     #       is going to be implemented on server side.
     self.logger.debug('Updating supervisord')
     supervisor = self.getSupervisorRPC()

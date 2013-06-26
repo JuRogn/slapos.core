@@ -13,8 +13,6 @@ class ConfigError(Exception):
 class ConfigCommand(Command):
     "Base class for commands that require a configuration file"
 
-    log = None
-
     default_config_var = 'SLAPOS_CONFIGURATION'
 
     # use this if default_config_var does not exist
@@ -25,8 +23,15 @@ class ConfigCommand(Command):
         ap.add_argument('--cfg',
                         help='SlapOS configuration file'
                              ' (default: $%s or %s)' %
-                                (self.default_config_var, self.default_config_path))
+                             (self.default_config_var, self.default_config_path))
         return ap
+
+    def config_path(self, args):
+        if args.cfg:
+            cfg_path = args.cfg
+        else:
+            cfg_path = os.environ.get(self.default_config_var, self.default_config_path)
+        return os.path.expanduser(cfg_path)
 
     def fetch_config(self, args):
         """
@@ -36,14 +41,9 @@ class ConfigCommand(Command):
         and will clearly show what is wrong with the file.
         """
 
-        if args.cfg:
-            cfg_path = args.cfg
-        else:
-            cfg_path = os.environ.get(self.default_config_var, self.default_config_path)
+        cfg_path = self.config_path(args)
 
-        cfg_path = os.path.expanduser(cfg_path)
-
-        self.log.debug('Loading config: %s' % cfg_path)
+        self.app.log.debug('Loading config: %s', cfg_path)
 
         if not os.path.exists(cfg_path):
             raise ConfigError('Configuration file does not exist: %s' % cfg_path)
