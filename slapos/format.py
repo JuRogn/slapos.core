@@ -729,7 +729,7 @@ class Interface(object):
                          interface_name)
     if sys.platform == 'cygwin':
       for q in address_list:
-        q.setdefault('netmask', 'FFFF:FFFF:FFFF:FFFF::')
+        q.setdefault('netmask', 'FFFF:FFFF:FFFF:FFFF:FFFF::')
     # XXX: Missing implementation of Unique Local IPv6 Unicast Addresses as
     # defined in http://www.rfc-editor.org/rfc/rfc4193.txt
     # XXX: XXX: XXX: IT IS DISALLOWED TO IMPLEMENT link-local addresses as
@@ -844,8 +844,8 @@ class Interface(object):
 
   def addIPv4LocalAddress(self, addr=None):
     """Adds local IPv4 address in ipv4_local_network"""
-    netmask = '255.255.255.254' if sys.platform == 'cygwin' \
-             else '255.255.255.255'
+    netmask = str(netaddr.IPNetwork(self.ipv4_local_network).netmask) \
+              if sys.platform == 'cygwin' else '255.255.255.255'
     local_address_list = self.getIPv4LocalAddressList()
     if addr is None:
       return self._generateRandomIPv4Address(netmask)
@@ -1204,7 +1204,9 @@ class FormatConfig(object):
       self.checkRequiredBinary(['brctl'])
 
     # Check if root is needed
-    if (self.alter_network or self.alter_user) and not self.dry_run:
+    if sys.platform == 'cygwin':
+      root_needed = False
+    elif (self.alter_network or self.alter_user) and not self.dry_run:
       root_needed = True
     else:
       root_needed = False
